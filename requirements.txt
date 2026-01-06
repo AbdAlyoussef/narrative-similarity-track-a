@@ -1,13 +1,25 @@
 # Requirements for Narrative Similarity Task A
-# Install PyTorch with CUDA support separately if using GPU
+# Enhanced with Multi-Head Aspect Scoring and Auxiliary Losses
+#
+# Install PyTorch with CUDA support separately if using GPU:
 # conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia -y
 # Or: pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
 
-torch>=2.2.0
+# Core ML libraries
+torch>=2.5.0
 transformers>=4.41.0
-datasets>=2.20.0
+sentence-transformers>=3.0.0
 accelerate>=0.33.0
+
+# Data processing
+datasets>=2.20.0
 pandas>=2.0.0
+numpy>=1.24.0
+
+# Utilities
 tqdm>=4.66.0
 scikit-learn>=1.3.0
-numpy>=1.24.0
+
+# Optional: for advanced evaluation/metrics
+matplotlib>=3.7.0
+seaborn>=0.12.0

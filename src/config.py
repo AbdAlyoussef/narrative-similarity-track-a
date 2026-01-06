@@ -25,6 +25,11 @@ class TrainConfig:
 
     use_fp16: bool = True
 
+    # Aux (multi-head + pseudo targets)
+    aux_lambda: float = 0.2
+    minilm_model: str = "sentence-transformers/all-MiniLM-L6-v2"
+    minilm_device: str = "cuda"
+
     # Output
     ckpt_dir: str = "checkpoints"
     best_ckpt_name: str = "best.pt"

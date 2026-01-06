@@ -10,6 +10,11 @@ from src.data import TrackAPairwiseDataset, TrackATriplesDataset
 from src.model import CrossEncoderScorer
 from src.utils import set_seed, ensure_dir
 
+# Add imports for auxiliary losses
+import re
+import torch.nn.functional as F
+from sentence_transformers import SentenceTransformer
+
 def collate_pairwise(batch, tokenizer, max_length: int):
     anchors = [x["anchor"] for x in batch]
     pos = [x["pos"] for x in batch]
@@ -25,7 +30,7 @@ def collate_pairwise(batch, tokenizer, max_length: int):
         padding=True, truncation=True, max_length=max_length,
         return_tensors="pt"
     )
-    return tok_pos, tok_neg
+    return tok_pos, tok_neg, batch  # <- add raw batch
 
 def pairwise_ranking_loss(s_pos, s_neg):
     # L = -log(sigmoid(s_pos - s_neg))
@@ -62,6 +67,128 @@ def evaluate_accuracy(model, tokenizer, ds, device, max_length: int, batch_size:
 
     return correct / max(total, 1)
 
+# Add helper functions for aspect-based auxiliary losses
+_SENT_SPLIT = re.compile(r"(?<=[.!?])\s+")
+
+def split_sentences(text: str):
+    text = (text or "").strip()
+    if not text:
+        return []
+    sents = _SENT_SPLIT.split(text)
+    sents = [s.strip() for s in sents if s.strip()]
+    return sents
+
+def aspect_views(text: str):
+    """
+    Deterministic, lightweight aspect extraction (no LLM, no heavy summarizer):
+      - Theme: first 1 sentence
+      - Outcome: last 1 sentence
+      - Action: up to 3 middle sentences (or next sentences)
+    """
+    sents = split_sentences(text)
+    if len(sents) == 0:
+        return ("", "", "")
+    if len(sents) == 1:
+        return (sents[0], sents[0], sents[0])
+
+    theme = sents[0]
+    outcome = sents[-1]
+
+    middle = sents[1:-1]
+    if len(middle) == 0:
+        action = sents[0]  # fallback
+    else:
+        action = " ".join(middle[:3])  # first 3 middle sentences
+    return (theme, action, outcome)
+
+class MiniLMPseudoTargets:
+    """
+    Builds pseudo-targets y_T, y_A, y_O using MiniLM cosine similarity
+    between aspect views of anchor vs candidate.
+
+    Uses embedding cache for speed.
+    """
+    def __init__(self, model_name="sentence-transformers/all-MiniLM-L6-v2", device="cuda"):
+        self.device = device if (device == "cuda" and torch.cuda.is_available()) else "cpu"
+        self.embedder = SentenceTransformer(model_name, device=self.device)
+        self.cache = {}  # maps aspect_text -> embedding tensor (on CPU for memory stability)
+
+    @torch.no_grad()
+    def _embed_cached(self, texts):
+        # returns a list of CPU tensors
+        embs = []
+        missing = []
+        missing_idx = []
+
+        for i, t in enumerate(texts):
+            key = t
+            if key in self.cache:
+                embs.append(self.cache[key])
+            else:
+                embs.append(None)
+                missing.append(key)
+                missing_idx.append(i)
+
+        if missing:
+            # encode returns numpy or tensor depending on settings; we convert to torch
+            new = self.embedder.encode(
+                missing,
+                batch_size=64,
+                convert_to_tensor=True,
+                normalize_embeddings=True,
+                show_progress_bar=False
+            )
+            new = new.detach().cpu()
+            for k, vec in zip(missing, new):
+                self.cache[k] = vec
+            for idx, vec in zip(missing_idx, new):
+                embs[idx] = vec
+
+        return embs
+
+    @staticmethod
+    def _cosine_batch(a_cpu, b_cpu):
+        # both are lists of CPU tensors normalized; cosine = dot
+        a = torch.stack(a_cpu, dim=0)
+        b = torch.stack(b_cpu, dim=0)
+        return (a * b).sum(dim=1).clamp(-1.0, 1.0)
+
+    @torch.no_grad()
+    def targets_for_pairs(self, anchors, cands):
+        """
+        anchors, cands: lists[str] same length
+        Returns:
+          yT, yA, yO as torch.FloatTensor on the *training device* (GPU if available)
+        """
+        a_theme, a_action, a_out = [], [], []
+        c_theme, c_action, c_out = [], [], []
+
+        for a, c in zip(anchors, cands):
+            at, aa, ao = aspect_views(a)
+            ct, ca, co = aspect_views(c)
+            a_theme.append(at); a_action.append(aa); a_out.append(ao)
+            c_theme.append(ct); c_action.append(ca); c_out.append(co)
+
+        aT = self._embed_cached(a_theme)
+        cT = self._embed_cached(c_theme)
+        aA = self._embed_cached(a_action)
+        cA = self._embed_cached(c_action)
+        aO = self._embed_cached(a_out)
+        cO = self._embed_cached(c_out)
+
+        yT = self._cosine_batch(aT, cT)
+        yA = self._cosine_batch(aA, cA)
+        yO = self._cosine_batch(aO, cO)
+
+        # map cosine [-1,1] -> [0,1] (helps stabilize MSE)
+        yT = (yT + 1.0) / 2.0
+        yA = (yA + 1.0) / 2.0
+        yO = (yO + 1.0) / 2.0
+
+        # move to training device for loss computation
+        train_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        return yT.to(train_device), yA.to(train_device), yO.to(train_device)
+
 def run(cfg: TrainConfig):
     ensure_dir(cfg.ckpt_dir)
     set_seed(cfg.seed)
@@ -72,6 +199,9 @@ def run(cfg: TrainConfig):
     # Windows-safe: force slow tokenizer for DeBERTa models (avoids DebertaV2TokenizerFast bug)
     tokenizer = AutoTokenizer.from_pretrained(cfg.model_name, use_fast=False)
     model = CrossEncoderScorer(cfg.model_name).to(device)
+
+    # Initialize pseudo-target builder for auxiliary losses
+    pseudo = MiniLMPseudoTargets(model_name=cfg.minilm_model, device=cfg.minilm_device)
 
     train_ds = TrackAPairwiseDataset(cfg.train_path)
     dev_ds = TrackATriplesDataset(cfg.dev_path)
@@ -107,14 +237,46 @@ def run(cfg: TrainConfig):
         pbar = tqdm(train_loader, desc=f"train epoch {epoch+1}/{cfg.epochs}")
         optimizer.zero_grad(set_to_none=True)
 
-        for step, (tok_pos, tok_neg) in enumerate(pbar, start=1):
+        for step, (tok_pos, tok_neg, batch_raw) in enumerate(pbar, start=1):
             tok_pos = {k: v.to(device) for k, v in tok_pos.items()}
             tok_neg = {k: v.to(device) for k, v in tok_neg.items()}
 
             with torch.cuda.amp.autocast(enabled=use_amp):
-                s_pos = model(tok_pos["input_ids"], tok_pos["attention_mask"])
-                s_neg = model(tok_neg["input_ids"], tok_neg["attention_mask"])
-                loss = pairwise_ranking_loss(s_pos, s_neg)
+                # Get combined score AND aspect scores for pos/neg
+                s_pos, t_pos, a_pos, o_pos = model.forward_aspects(
+                    tok_pos["input_ids"], tok_pos["attention_mask"]
+                )
+                s_neg, t_neg, a_neg, o_neg = model.forward_aspects(
+                    tok_neg["input_ids"], tok_neg["attention_mask"]
+                )
+
+                # Main ranking loss unchanged
+                rank_loss = pairwise_ranking_loss(s_pos, s_neg)
+
+                # Pseudo targets (MiniLM cosine on aspect views)
+                # NOTE: anchors are the same; candidates differ for pos/neg
+                anchors = [x["anchor"] for x in batch_raw]   # we'll define batch_raw below
+                pos_txt = [x["pos"] for x in batch_raw]
+                neg_txt = [x["neg"] for x in batch_raw]
+
+                yT_pos, yA_pos, yO_pos = pseudo.targets_for_pairs(anchors, pos_txt)
+                yT_neg, yA_neg, yO_neg = pseudo.targets_for_pairs(anchors, neg_txt)
+
+                # Normalize model aspect scores to [0,1] with sigmoid to match targets
+                t_pos_n = torch.sigmoid(t_pos)
+                a_pos_n = torch.sigmoid(a_pos)
+                o_pos_n = torch.sigmoid(o_pos)
+                t_neg_n = torch.sigmoid(t_neg)
+                a_neg_n = torch.sigmoid(a_neg)
+                o_neg_n = torch.sigmoid(o_neg)
+
+                mse = torch.nn.functional.mse_loss
+                aux_loss = (
+                    mse(t_pos_n, yT_pos) + mse(a_pos_n, yA_pos) + mse(o_pos_n, yO_pos) +
+                    mse(t_neg_n, yT_neg) + mse(a_neg_n, yA_neg) + mse(o_neg_n, yO_neg)
+                ) / 2.0
+
+                loss = rank_loss + cfg.aux_lambda * aux_loss
 
             scaler.scale(loss).backward()
 

@@ -10,14 +10,25 @@ from src.data import TrackATriplesDataset
 from src.model import CrossEncoderScorer
 from src.utils import ensure_dir
 
+RUBRIC = (
+    "Judge narrative similarity based on:\n"
+    "1) Abstract Theme (ideas/motives),\n"
+    "2) Course of Action (key events/turning points),\n"
+    "3) Outcomes (results).\n"
+    "Ignore names, writing style, and setting unless essential.\n\n"
+)
+
+def format_pair(anchor: str, cand: str) -> str:
+    return f"{RUBRIC}ANCHOR:\n{anchor}\n\nCANDIDATE:\n{cand}"
+
 def collate_triples(batch):
     keys = batch[0].keys()
     return {k: [x[k] for x in batch] for k in keys}
 
 @torch.no_grad()
-def score_batch(model, tokenizer, anchors, cands, device, max_length: int):
+def score_batch(model, tokenizer, formatted_pairs, _, device, max_length: int):
     tok = tokenizer(
-        anchors, cands,
+        formatted_pairs,
         padding=True, truncation=True, max_length=max_length,
         return_tensors="pt"
     )
@@ -47,8 +58,11 @@ def run(cfg: TrainConfig, input_path: str, ckpt_path: str, output_path: str):
             a = batch["text_a"]
             b = batch["text_b"]
 
-            s_a = score_batch(model, tokenizer, anchors, a, device, cfg.max_length)
-            s_b = score_batch(model, tokenizer, anchors, b, device, cfg.max_length)
+            pairs_a = [format_pair(anchor, cand) for anchor, cand in zip(anchors, a)]
+            pairs_b = [format_pair(anchor, cand) for anchor, cand in zip(anchors, b)]
+
+            s_a = score_batch(model, tokenizer, pairs_a, None, device, cfg.max_length)
+            s_b = score_batch(model, tokenizer, pairs_b, None, device, cfg.max_length)
 
             for i in range(len(anchors)):
                 pred_a_closer = (s_a[i] > s_b[i])

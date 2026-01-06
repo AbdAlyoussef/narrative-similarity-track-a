@@ -9,24 +9,39 @@ from src.config import TrainConfig
 from src.data import TrackAPairwiseDataset, TrackATriplesDataset
 from src.model import CrossEncoderScorer
 from src.utils import set_seed, ensure_dir
+from src.aspects import aspect_views
 
 # Add imports for auxiliary losses
 import re
 import torch.nn.functional as F
 from sentence_transformers import SentenceTransformer
 
+RUBRIC = (
+    "Judge narrative similarity based on:\n"
+    "1) Abstract Theme (ideas/motives),\n"
+    "2) Course of Action (key events/turning points),\n"
+    "3) Outcomes (results).\n"
+    "Ignore names, writing style, and setting unless essential.\n\n"
+)
+
+def format_pair(anchor: str, cand: str) -> str:
+    return f"{RUBRIC}ANCHOR:\n{anchor}\n\nCANDIDATE:\n{cand}"
+
 def collate_pairwise(batch, tokenizer, max_length: int):
     anchors = [x["anchor"] for x in batch]
     pos = [x["pos"] for x in batch]
     neg = [x["neg"] for x in batch]
 
+    pos_pairs = [format_pair(a, p) for a, p in zip(anchors, pos)]
+    neg_pairs = [format_pair(a, n) for a, n in zip(anchors, neg)]
+
     tok_pos = tokenizer(
-        anchors, pos,
+        pos_pairs,
         padding=True, truncation=True, max_length=max_length,
         return_tensors="pt"
     )
     tok_neg = tokenizer(
-        anchors, neg,
+        neg_pairs,
         padding=True, truncation=True, max_length=max_length,
         return_tensors="pt"
     )
@@ -78,28 +93,29 @@ def split_sentences(text: str):
     sents = [s.strip() for s in sents if s.strip()]
     return sents
 
-def aspect_views(text: str):
-    """
-    Deterministic, lightweight aspect extraction (no LLM, no heavy summarizer):
-      - Theme: first 1 sentence
-      - Outcome: last 1 sentence
-      - Action: up to 3 middle sentences (or next sentences)
-    """
-    sents = split_sentences(text)
-    if len(sents) == 0:
-        return ("", "", "")
-    if len(sents) == 1:
-        return (sents[0], sents[0], sents[0])
+# OLD aspect_views function - replaced by src.aspects.aspect_views (Stage 2 improvement)
+# def aspect_views(text: str):
+#     """
+#     Deterministic, lightweight aspect extraction (no LLM, no heavy summarizer):
+#       - Theme: first 1 sentence
+#       - Outcome: last 1 sentence
+#       - Action: up to 3 middle sentences (or next sentences)
+#     """
+#     sents = split_sentences(text)
+#     if len(sents) == 0:
+#         return ("", "", "")
+#     if len(sents) == 1:
+#         return (sents[0], sents[0], sents[0])
 
-    theme = sents[0]
-    outcome = sents[-1]
+#     theme = sents[0]
+#     outcome = sents[-1]
 
-    middle = sents[1:-1]
-    if len(middle) == 0:
-        action = sents[0]  # fallback
-    else:
-        action = " ".join(middle[:3])  # first 3 middle sentences
-    return (theme, action, outcome)
+#     middle = sents[1:-1]
+#     if len(middle) == 0:
+#         action = sents[0]  # fallback
+#     else:
+#         action = " ".join(middle[:3])  # first 3 middle sentences
+#     return (theme, action, outcome)
 
 class MiniLMPseudoTargets:
     """

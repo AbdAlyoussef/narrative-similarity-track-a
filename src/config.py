@@ -15,9 +15,9 @@ class TrainConfig:
     seed: int = 42
     epochs: int = 3
 
-    train_batch_size: int = 8
+    train_batch_size: int = 4
     eval_batch_size: int = 16
-    grad_accum_steps: int = 1
+    grad_accum_steps: int = 2
     lr: float = 2e-5
     weight_decay: float = 0.01
     warmup_ratio: float = 0.06
@@ -32,4 +32,4 @@ class TrainConfig:
 
     # Output
     ckpt_dir: str = "checkpoints"
-    best_ckpt_name: str = "best.pt"
+    best_ckpt_name: str = "best_stage4.pt"

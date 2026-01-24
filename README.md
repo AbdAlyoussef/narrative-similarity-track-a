@@ -67,6 +67,20 @@ Training will:
 - Use MiniLM embeddings as pseudo-targets
 - Save the best checkpoint to `checkpoints/best_stage4.pt` (default in `src/config.py`)
 
+## 2b) Combined dataset split (train+dev+sample)
+To evaluate on a single merged dataset, you can shuffle and split 80/20:
+```bash
+python -m src.random_split_train --train_ratio 0.8 --seed 42
+```
+
+This trains on 80% of the merged data and evaluates on the remaining 20%.
+
+## 2c) k-fold cross-validation (dev-focused)
+To reduce synthetic mismatch while keeping a fair eval signal:
+```bash
+python -m src.cv_train --folds 5 --seed 42
+```
+
 ## 3) Predict (write submission JSONL)
 ```bash
 python -m src.predict --input data/dev_track_a.jsonl --ckpt checkpoints/best_stage4.pt --output output/track_a.jsonl
@@ -87,6 +101,22 @@ The output JSONL contains:
 ```bash
 python -m src.evaluate --data_path data/dev_track_a.jsonl --ckpt_path checkpoints/best_stage4.pt
 ```
+
+### What evaluate.py does
+- Loads the model architecture from `src/model.py` and the backbone specified in `src/config.py`.
+- Loads the checkpoint you pass via `--ckpt_path`.
+- Evaluates on the JSONL file you pass via `--data_path` (dev by default).
+- Accuracy is the percentage of triples where the model predicts the correct closer story.
+
+### Evaluate the merged 80/20 split
+The merged split is evaluated inside `src.random_split_train` on its held-out 20%.
+Run the split script to see that evaluation accuracy:
+```bash
+python -m src.random_split_train --train_ratio 0.8 --seed 42
+```
+
+## Results (latest)
+- Best eval accuracy on merged dataset (train+dev+sample, 80/20 split): **0.9439**
 
 ## Implementation Notes
 

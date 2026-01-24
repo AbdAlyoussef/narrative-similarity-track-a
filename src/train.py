@@ -205,7 +205,7 @@ class MiniLMPseudoTargets:
         train_device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         return yT.to(train_device), yA.to(train_device), yO.to(train_device)
 
-def run(cfg: TrainConfig):
+def run_with_datasets(cfg: TrainConfig, train_ds, dev_ds, sample_ds=None):
     ensure_dir(cfg.ckpt_dir)
     set_seed(cfg.seed)
 
@@ -218,10 +218,6 @@ def run(cfg: TrainConfig):
 
     # Initialize pseudo-target builder for auxiliary losses
     pseudo = MiniLMPseudoTargets(model_name=cfg.minilm_model, device=cfg.minilm_device)
-
-    train_ds = TrackAPairwiseDataset(cfg.train_path)
-    dev_ds = TrackATriplesDataset(cfg.dev_path)
-    sample_ds = TrackATriplesDataset(cfg.sample_path)
 
     train_loader = DataLoader(
         train_ds,
@@ -244,7 +240,8 @@ def run(cfg: TrainConfig):
     best_acc = -1.0
     best_path = f"{cfg.ckpt_dir}/{cfg.best_ckpt_name}"
 
-    print(f"[Info] Train size: {len(train_ds)} | Dev size: {len(dev_ds)} | Sample size: {len(sample_ds)}")
+    sample_size = len(sample_ds) if sample_ds is not None else 0
+    print(f"[Info] Train size: {len(train_ds)} | Dev size: {len(dev_ds)} | Sample size: {sample_size}")
     print(f"[Info] Model: {cfg.model_name} | max_length={cfg.max_length}")
     print(f"[Info] epochs={cfg.epochs} | train_batch_size={cfg.train_batch_size} | fp16={use_amp}")
 
@@ -307,10 +304,13 @@ def run(cfg: TrainConfig):
             pbar.set_postfix(loss=float(loss.detach().cpu()))
 
         dev_acc = evaluate_accuracy(model, tokenizer, dev_ds, device, cfg.max_length, cfg.eval_batch_size)
-        sample_acc = evaluate_accuracy(model, tokenizer, sample_ds, device, cfg.max_length, cfg.eval_batch_size)
+        sample_acc = 0.0
+        if sample_ds is not None:
+            sample_acc = evaluate_accuracy(model, tokenizer, sample_ds, device, cfg.max_length, cfg.eval_batch_size)
 
         print(f"[Eval] Dev accuracy   : {dev_acc:.4f}")
-        print(f"[Eval] Sample accuracy: {sample_acc:.4f}")
+        if sample_ds is not None:
+            print(f"[Eval] Sample accuracy: {sample_acc:.4f}")
 
         if dev_acc > best_acc:
             best_acc = dev_acc
@@ -322,6 +322,13 @@ def run(cfg: TrainConfig):
 
     print(f"[Done] Best dev accuracy: {best_acc:.4f}")
     print(f"[Done] Best checkpoint  : {best_path}")
+    return best_acc
+
+def run(cfg: TrainConfig):
+    train_ds = TrackAPairwiseDataset(cfg.train_path)
+    dev_ds = TrackATriplesDataset(cfg.dev_path)
+    sample_ds = TrackATriplesDataset(cfg.sample_path)
+    run_with_datasets(cfg, train_ds, dev_ds, sample_ds)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()

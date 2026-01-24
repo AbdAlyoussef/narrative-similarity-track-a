@@ -70,7 +70,7 @@ def main():
     # Evaluate
     accuracy = evaluate_accuracy(model, tokenizer, ds, device, cfg.max_length, args.batch_size)
 
-    print(".4f")
+    print(f"{accuracy:.4f}")
 
 if __name__ == "__main__":
     main()

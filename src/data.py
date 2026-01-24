@@ -60,3 +60,41 @@ class TrackATriplesDataset(Dataset):
             "text_b": r["text_b"],
             "text_a_is_closer": bool(r["text_a_is_closer"]),
         }
+
+class TrackAPairwiseRowsDataset(Dataset):
+    """
+    Pairwise dataset from pre-loaded rows.
+    """
+    def __init__(self, rows: List[Dict]):
+        self.rows = rows
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, idx: int) -> Dict:
+        r = self.rows[idx]
+        anchor = r["anchor_text"]
+        a = r["text_a"]
+        b = r["text_b"]
+        a_is_closer = bool(r["text_a_is_closer"])
+        pos, neg = (a, b) if a_is_closer else (b, a)
+        return {"anchor": anchor, "pos": pos, "neg": neg}
+
+class TrackATriplesRowsDataset(Dataset):
+    """
+    Triple dataset from pre-loaded rows.
+    """
+    def __init__(self, rows: List[Dict]):
+        self.rows = rows
+
+    def __len__(self) -> int:
+        return len(self.rows)
+
+    def __getitem__(self, idx: int) -> Dict:
+        r = self.rows[idx]
+        return {
+            "anchor_text": r["anchor_text"],
+            "text_a": r["text_a"],
+            "text_b": r["text_b"],
+            "text_a_is_closer": bool(r["text_a_is_closer"]),
+        }

@@ -1,4 +1,5 @@
 import argparse
+import json
 import random
 
 from src.config import TrainConfig
@@ -12,6 +13,8 @@ def main():
     parser.add_argument("--sample_path", type=str, default="data/sample_track_a.jsonl")
     parser.add_argument("--train_ratio", type=float, default=0.8)
     parser.add_argument("--seed", type=int, default=42)
+    parser.add_argument("--write_splits", type=int, default=1,
+                        help="1 to write split files to output/, 0 to skip")
     args = parser.parse_args()
 
     rows = []
@@ -25,6 +28,21 @@ def main():
     split_idx = int(len(rows) * args.train_ratio)
     train_rows = rows[:split_idx]
     eval_rows = rows[split_idx:]
+
+    if args.write_splits:
+        out_train = f"output/merged_split_train_seed{args.seed}.jsonl"
+        out_eval = f"output/merged_split_eval_seed{args.seed}.jsonl"
+        with open(out_train, "w", encoding="utf-8") as f:
+            for r in train_rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        with open(out_eval, "w", encoding="utf-8") as f:
+            for r in eval_rows:
+                f.write(json.dumps(r, ensure_ascii=False) + "\n")
+        with open("output/last_split.json", "w", encoding="utf-8") as f:
+            json.dump({"train_path": out_train, "eval_path": out_eval}, f)
+        print(f"[Split] Wrote train split -> {out_train}")
+        print(f"[Split] Wrote eval split  -> {out_eval}")
+        print("[Split] Wrote last split info -> output/last_split.json")
 
     cfg = TrainConfig()
     train_ds = TrackAPairwiseRowsDataset(train_rows)

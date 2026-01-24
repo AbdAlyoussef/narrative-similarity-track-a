@@ -14,7 +14,7 @@ given (anchor, story A, story B), predict whether A is narratively closer to the
 - `data/train_track_a.jsonl` (1900 synthetic triples)
 - `data/dev_track_a.jsonl` (200 labeled dev triples)
 - `data/sample_track_a.jsonl` (39 labeled examples)
-- `checkpoints/` (several checkpoints, including `best_stage4.pt`)
+- `checkpoints/best_stage4.pt` (best model checkpoint)
 
 ## Environment Setup
 
@@ -51,7 +51,7 @@ python -m src.verify_data --path data/train_track_a.jsonl
 python -m src.verify_data --path data/dev_track_a.jsonl
 ```
 
-## 2) Train
+## 2) Train (standard)
 ```bash
 python -m src.train
 ```
@@ -74,6 +74,10 @@ python -m src.random_split_train --train_ratio 0.8 --seed 42
 ```
 
 This trains on 80% of the merged data and evaluates on the remaining 20%.
+It also writes split files to:
+- `output/merged_split_train_seed42.jsonl`
+- `output/merged_split_eval_seed42.jsonl`
+- `output/last_split.json` (pointers used by `src.evaluate`)
 
 ## 2c) k-fold cross-validation (dev-focused)
 To reduce synthetic mismatch while keeping a fair eval signal:
@@ -107,6 +111,10 @@ python -m src.evaluate --data_path data/dev_track_a.jsonl --ckpt_path checkpoint
 - Loads the checkpoint you pass via `--ckpt_path`.
 - Evaluates on the JSONL file you pass via `--data_path` (dev by default).
 - Accuracy is the percentage of triples where the model predicts the correct closer story.
+
+### Leakage check
+If `output/last_split.json` exists, `src.evaluate` will use the saved split and
+check for overlap between train and eval. It will abort if leakage is detected.
 
 ### Evaluate the merged 80/20 split
 The merged split is evaluated inside `src.random_split_train` on its held-out 20%.
@@ -159,6 +167,8 @@ narrative-similarity-track-a/
     config.py
     model.py
     train.py
+    random_split_train.py
+    cv_train.py
     evaluate.py
     predict.py
     data.py
@@ -166,8 +176,6 @@ narrative-similarity-track-a/
     utils.py
     verify_data.py
   checkpoints/
-    best.pt
-    best_stage2.pt
     best_stage4.pt
 ```
 

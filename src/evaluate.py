@@ -1,11 +1,14 @@
 import argparse
+import json
+import os
+import sys
 import torch
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, DebertaV2Tokenizer
 from tqdm import tqdm
 
 from src.config import TrainConfig
-from src.data import TrackATriplesDataset
+from src.data import TrackATriplesDataset, read_jsonl
 from src.model import CrossEncoderScorer
 
 @torch.no_grad()
@@ -44,6 +47,10 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--data_path", type=str, default="data/dev_track_a.jsonl",
                        help="Path to evaluation data")
+    parser.add_argument("--train_path", type=str, default=None,
+                       help="Optional path to training data to check for overlap")
+    parser.add_argument("--fail_on_leak", type=int, default=1,
+                       help="1 to abort if eval overlaps training data")
     parser.add_argument("--ckpt_path", type=str, default="checkpoints/best.pt",
                        help="Path to model checkpoint")
     parser.add_argument("--batch_size", type=int, default=8,
@@ -63,6 +70,34 @@ def main():
     ckpt = torch.load(args.ckpt_path, map_location="cpu")
     model.load_state_dict(ckpt["model_state"])
     model.eval()
+
+    # Optional overlap check to prevent leakage
+    if not args.train_path:
+        last_split = "output/last_split.json"
+        if os.path.exists(last_split):
+            with open(last_split, "r", encoding="utf-8") as f:
+                split_info = json.load(f)
+            args.train_path = split_info.get("train_path")
+            if args.data_path == "data/dev_track_a.jsonl":
+                args.data_path = split_info.get("eval_path", args.data_path)
+            print(f"[Info] Using split info from {last_split}")
+    if args.train_path:
+        train_rows = read_jsonl(args.train_path)
+        eval_rows = read_jsonl(args.data_path)
+        train_keys = {
+            (r["anchor_text"], r["text_a"], r["text_b"], bool(r["text_a_is_closer"]))
+            for r in train_rows
+        }
+        eval_keys = {
+            (r["anchor_text"], r["text_a"], r["text_b"], bool(r["text_a_is_closer"]))
+            for r in eval_rows
+        }
+        overlap = train_keys.intersection(eval_keys)
+        if overlap:
+            print(f"[Warn] Overlap detected between train and eval: {len(overlap)} rows")
+            if args.fail_on_leak:
+                print("[Warn] Aborting evaluation due to leakage. Use a held-out eval set.")
+                sys.exit(1)
 
     # Load data
     ds = TrackATriplesDataset(args.data_path)

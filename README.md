@@ -85,6 +85,18 @@ To reduce synthetic mismatch while keeping a fair eval signal:
 python -m src.cv_train --folds 5 --seed 42
 ```
 
+## 2d) Baseline (single-head cross-encoder)
+Train a baseline model without aspect heads on the merged 80/20 split:
+```bash
+python -m src.train_baseline --train_path output/merged_split_train_seed42.jsonl --eval_path output/merged_split_eval_seed42.jsonl
+```
+
+## 2e) Baseline k-fold CV (dev-focused)
+Compare baseline vs aspect-aware on dev folds:
+```bash
+python -m src.cv_train_baseline --folds 5 --seed 42
+```
+
 ## 3) Predict (write submission JSONL)
 ```bash
 python -m src.predict --input data/dev_track_a.jsonl --ckpt checkpoints/best_stage4.pt --output output/track_a.jsonl
@@ -166,9 +178,12 @@ narrative-similarity-track-a/
   src/
     config.py
     model.py
+    model_single_head.py
     train.py
+    train_baseline.py
     random_split_train.py
     cv_train.py
+    cv_train_baseline.py
     evaluate.py
     predict.py
     data.py
@@ -183,3 +198,17 @@ narrative-similarity-track-a/
 - No paid APIs are used.
 - GPU is recommended for reasonable training time.
 - On Windows, the training code forces `use_fast=False` for DeBERTa tokenizers.
+
+## File Roles (quick reference)
+- `src/train.py`: main aspect-aware training loop.
+- `src/model.py`: multi-head cross-encoder (theme/action/outcome).
+- `src/model_single_head.py`: baseline single-head cross-encoder.
+- `src/train_baseline.py`: baseline training on a fixed split.
+- `src/random_split_train.py`: merges datasets, shuffles, splits 80/20, and trains.
+- `src/cv_train.py`: k-fold CV for aspect-aware model on dev.
+- `src/cv_train_baseline.py`: k-fold CV for baseline model on dev.
+- `src/evaluate.py`: evaluate a checkpoint with leakage checks.
+- `src/predict.py`: generate JSONL predictions.
+- `src/data.py`: JSONL loading + Dataset classes.
+- `src/aspects.py`: aspect extraction utilities.
+- `src/utils.py`: seed + directory helpers.
